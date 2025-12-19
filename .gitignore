@@ -1,0 +1,14 @@
+# 编译生成物
+build/
+out/
+*.o
+*.elf
+*.bin
+
+# IDE
+.vscode/
+.idea/
+
+# 临时文件
+*.log
+*.tmp
