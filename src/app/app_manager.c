@@ -1,3 +1,5 @@
+// 全局应用管理器 (负责切换 Home <-> 各种 App)
+
 #include <stddef.h>
 #include "app_manager.h"
 

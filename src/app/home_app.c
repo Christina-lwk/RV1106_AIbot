@@ -1,3 +1,5 @@
+//开机主页 (显示图标，点击进入app)
+
 #include "home_app.h"
 #include "lvgl.h"
 

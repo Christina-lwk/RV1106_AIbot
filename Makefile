@@ -1,107 +1,126 @@
-################################################################################
-# C/C++ 混合编译 Makefile
-################################################################################
-
+# ==========================================
+# Echo-Mate 完整工程 Makefile
+# ==========================================
 -include toolchain.mk
-CC ?= gcc
-CXX ?= g++ # C++ 编译器
+CC  ?= gcc
+CXX ?= g++
 
-################################################################################
-# 目录配置
-################################################################################
-SRC_DIR = src
-INC_DIR = include
-LIB_DIR = third_party
+# 1. 目录定义
+SRC_DIR   = src
+INC_DIR   = include
+LIB_DIR   = third_party
 BUILD_DIR = product/build
-BIN_DIR = product/bin
+BIN_DIR   = product/bin
 
-TARGET_NAME = echo_mate_app
-TARGET = $(BIN_DIR)/$(TARGET_NAME)
+TARGET = $(BIN_DIR)/echo_mate_app
 
-################################################################################
-# 源文件收集 (C 和 C++ 分开收集)
-################################################################################
+# 2. 库文件搜索路径 (使用您提供的绝对路径)
+SYSROOT_LIB_DIR := /home/ubuntu/project/Echo-Mate/SDK/rv1106-sdk/sysdrv/source/buildroot/buildroot-2023.02.6/output/host/arm-buildroot-linux-uclibcgnueabihf/sysroot/usr/lib
 
-# 1. 扫描 C 文件 (.c)
-APP_SRCS_C := $(shell find $(SRC_DIR) -name '*.c')
+# 3. 头文件包含路径 (INCLUDES)
+# [核心原则] 将 src 添加为根，这样可以用 #include "app/ai_chat/xxx.h"
+INCLUDES := -I$(INC_DIR)
+INCLUDES += -I$(INC_DIR)/common
+INCLUDES += -I$(INC_DIR)/cjson
+INCLUDES += -I$(SRC_DIR)
+INCLUDES += -I$(SRC_DIR)/services/network
 
-# 收集 LVGL (C语言)
-LVGL_DIR := $(LIB_DIR)/lvgl
-LVGL_SRCS := $(shell find $(LVGL_DIR)/src -name '*.c')
-LVGL_SRCS += $(shell find $(LVGL_DIR)/demos -name '*.c')
+# AI Chat 模块路径
+INCLUDES += -I$(SRC_DIR)/app/AI_chat
+INCLUDES += -I$(SRC_DIR)/app/AI_chat/states
 
-# 2. 扫描 C++ 文件 (.cpp, .cc, .cxx)
-APP_SRCS_CXX := $(shell find $(SRC_DIR) -name '*.cpp')
-APP_SRCS_CXX += $(shell find $(SRC_DIR) -name '*.cc')
+# [第三方库]
+INCLUDES += -I$(LIB_DIR)/lvgl
+INCLUDES += -I$(LIB_DIR)/lvgl/src
+INCLUDES += -I$(LIB_DIR)/lvgl/demos
+INCLUDES += -I$(LIB_DIR)/tinyalsa/include
 
-# 3. 合并所有源文件列表 (用于 info 显示)
-SRCS_ALL := $(APP_SRCS_C) $(LVGL_SRCS) $(APP_SRCS_CXX)
-
-# 4. 生成 .o 文件路径
-OBJS := $(APP_SRCS_C:%.c=$(BUILD_DIR)/%.o) \
-        $(LVGL_SRCS:%.c=$(BUILD_DIR)/%.o) \
-        $(APP_SRCS_CXX:%.cpp=$(BUILD_DIR)/%.o) \
-        $(APP_SRCS_CXX:%.cc=$(BUILD_DIR)/%.o)
-
-################################################################################
-# 编译选项
-################################################################################
-# 头文件路径
-INCLUDES := -I$(INC_DIR) \
-            -I$(INC_DIR)/common \
-            -I$(SRC_DIR) \
-            -I$(LVGL_DIR) \
-            -I$(LVGL_DIR)/src \
-            -I$(LVGL_DIR)/demos 
-
-# 通用 Flag
+# 4. 编译参数 (FLAGS)
+# 通用参数：包含优化等级、警告和头文件路径
 COMMON_FLAGS := -O2 -g -Wall -Wshadow -Wundef $(INCLUDES)
 
-# C 专用 Flag
-CFLAGS := $(COMMON_FLAGS) -std=c99 -DLV_CONF_INCLUDE_SIMPLE -DLV_LVGL_H_INCLUDE_SIMPLE
+# C 编译参数
+CFLAGS  := $(COMMON_FLAGS) \
+           -DUSE_EVDEV=1 \
+           -DLV_LVGL_H_INCLUDE_SIMPLE
 
-# C++ 专用 Flag
-CXXFLAGS := $(COMMON_FLAGS) -std=c++11 
+# C++ 编译参数 (使用 C++11 标准)
+CXXFLAGS := $(COMMON_FLAGS) -std=c++11
 
-# 链接库 (C++ 项目通常需要用 g++ 链接)
-LDFLAGS := -lm -lpthread
+# 链接参数：指定库路径和需要链接的库
+# 注意：这里按需链接了 curl, cjson, ssl, crypto, z, pthread
+LDFLAGS  := -L$(SYSROOT_LIB_DIR) -lm -lpthread -lcurl -lcjson -lssl -lcrypto -lz
 
-################################################################################
-# 构建规则
-################################################################################
+# 5. 源文件扫描 (Source Scanning)
+# [妙招] 使用 find 命令递归扫描，自动发现新添加的文件！
+# C 文件：排除 utils 目录下的工具源码(防止 main 函数冲突)
+APP_SRCS_C    := $(shell find $(SRC_DIR) -name '*.c' -not -path "$(SRC_DIR)/utils/*")
 
-.PHONY: all clean info
+# 第三方库源码
+TINYALSA_SRCS := $(shell find $(LIB_DIR)/tinyalsa/src -name '*.c')
+LVGL_SRCS     := $(shell find $(LIB_DIR)/lvgl/src -name '*.c')
+LVGL_SRCS     += $(shell find $(LIB_DIR)/lvgl/demos -name '*.c')
+
+# C++ 文件：自动扫描 src 下所有 .cpp 和 .cc
+# 这里会自动抓取你的 src/app/ai_chat/chat_app.cc
+APP_SRCS_CPP  := $(shell find $(SRC_DIR) -name '*.cpp')
+APP_SRCS_CC   := $(shell find $(SRC_DIR) -name '*.cc')
+
+# 6. 目标文件生成路径 (Object Generation)
+# 将源文件的 .c/.cpp/.cc 映射为 product/build/xxx.o
+OBJS := $(APP_SRCS_C:%.c=$(BUILD_DIR)/%.o) \
+        $(TINYALSA_SRCS:%.c=$(BUILD_DIR)/%.o) \
+        $(LVGL_SRCS:%.c=$(BUILD_DIR)/%.o) \
+        $(APP_SRCS_CPP:%.cpp=$(BUILD_DIR)/%.o) \
+        $(APP_SRCS_CC:%.cc=$(BUILD_DIR)/%.o)
+
+# 7. 编译规则 (Rules)
+.PHONY: all clean check info
 
 all: $(TARGET)
 
-# 链接 (使用 CXX 进行链接，以支持 C++ 标准库)
+# 链接步骤
 $(TARGET): $(OBJS)
 	@mkdir -p $(dir $@)
-	@echo "LINKING (Mixed C/C++): $@"
+	@echo "LINKING: $@"
 	@$(CXX) $(OBJS) -o $@ $(LDFLAGS)
-	@echo "SUCCESS! Target: $@"
+	@echo "✅ BUILD SUCCESS! Output: $@"
 
-# 编译 C 文件
+# C 文件编译规则
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
-	@echo "CC  $<"
+	@echo "CC   $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-# 编译 C++ 文件 (.cpp)
+# C++ (cpp) 文件编译规则
 $(BUILD_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
-	@echo "CXX $<"
+	@echo "CXX  $<"
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# 编译 C++ 文件 (.cc)
+# C++ (cc) 文件编译规则
 $(BUILD_DIR)/%.o: %.cc
 	@mkdir -p $(dir $@)
-	@echo "CXX $<"
+	@echo "CXX  $<"
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
-clean:
-	@rm -rf product/build product/bin
+# 代码检查规则 (Check)
+check:
+	@echo ">>> STARTING HEADER & SYNTAX CHECK <<<"
+	@for file in $(APP_SRCS_C); do \
+		echo "[CHECK C]   $$file"; \
+		$(CC) $(CFLAGS) -fsyntax-only $$file || exit 1; \
+	done
+	@for file in $(APP_SRCS_CPP); do \
+		echo "[CHECK CPP] $$file"; \
+		$(CXX) $(CXXFLAGS) -fsyntax-only $$file || exit 1; \
+	done
+	@for file in $(APP_SRCS_CC); do \
+		echo "[CHECK CC]  $$file"; \
+		$(CXX) $(CXXFLAGS) -fsyntax-only $$file || exit 1; \
+	done
+	@echo ">>> ✅ CHECK PASSED: ALL INCLUDES OK! <<<"
 
-info:
-	@echo "C files: $(words $(APP_SRCS_C) $(LVGL_SRCS))"
-	@echo "C++ files: $(words $(APP_SRCS_CXX))"
+clean:
+	@echo "CLEANING..."
+	@rm -rf product/build product/bin

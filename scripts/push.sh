@@ -1,4 +1,3 @@
-#作用：找到程序 -> 瘦身-> 传到板子的 /tmp 目录。
 #!/bin/bash
 set -e
 cd "$(dirname "$0")/.."
@@ -6,7 +5,9 @@ cd "$(dirname "$0")/.."
 # 配置
 APP="echo_mate_app"
 LOCAL="product/bin/$APP"
-REMOTE="/tmp"
+# [修正点] 目标目录改为和 run.sh 一致
+REMOTE="/root/echo_mate/bin"
+# [注意] 确保你的环境变量里有这个工具，如果没有，脚本会自动跳过瘦身
 STRIP="arm-rockchip830-linux-uclibcgnueabihf-strip"
 
 if [ ! -f "$LOCAL" ]; then
@@ -14,10 +15,27 @@ if [ ! -f "$LOCAL" ]; then
     exit 1
 fi
 
-# 瘦身并传输
-cp $LOCAL ${LOCAL}_small
-$STRIP ${LOCAL}_small
-adb push ${LOCAL}_small $REMOTE/$APP
-rm ${LOCAL}_small
+# 尝试瘦身 (如果工具存在)
+if command -v $STRIP >/dev/null 2>&1; then
+    echo "Stripping binary..."
+    cp $LOCAL ${LOCAL}_small
+    $STRIP ${LOCAL}_small
+    target_file="${LOCAL}_small"
+else
+    echo "Strip tool not found, pushing original size..."
+    target_file="$LOCAL"
+fi
 
-echo "Push done: $REMOTE/$APP"
+# 确保板子上目录存在 (防止报错)
+adb shell "mkdir -p $REMOTE"
+
+# 传输
+echo "Pushing to $REMOTE..."
+adb push $target_file $REMOTE/$APP
+
+# 清理临时文件
+if [ "$target_file" != "$LOCAL" ]; then
+    rm $target_file
+fi
+
+echo "✅ Push done: $REMOTE/$APP"

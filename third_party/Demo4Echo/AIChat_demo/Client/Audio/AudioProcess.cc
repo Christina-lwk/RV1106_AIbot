@@ -1,4 +1,4 @@
-#include "./AudioProcess.h"
+#include "AudioProcess.h"
 #include "../Utils/user_log.h"
 #include <iostream>
 #include <fstream>

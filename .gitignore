@@ -1,14 +1,23 @@
-# 编译生成物
-build/
-out/
+# 忽略编译生成目录
+product/build/
+product/bin/
+
+# 忽略临时文件
 *.o
-*.elf
-*.bin
+*.d
+.DS_Store
 
-# IDE
+# 忽略用户录制的临时音频
+uploads/*.wav
+server/uploads/*.wav
+server/responses/*.wav
+
+# 忽略 Python 缓存
+__pycache__/
+*.pyc
+
+# 忽略 VSCode 配置 (可选)
 .vscode/
-.idea/
 
-# 临时文件
-*.log
-*.tmp
+# 忽略主要的可执行文件 (因为每次都会重新编译)
+echo_mate_app

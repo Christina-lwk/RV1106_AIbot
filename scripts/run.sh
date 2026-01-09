@@ -1,8 +1,8 @@
-#作用：给权限，运行。
 #!/bin/bash
+echo "Configuring Board Network & Starting App..."
 
-APP="echo_mate_app"
-REMOTE="/tmp"
-
-# 远程执行：加权限 && 运行
-adb shell "chmod +x $REMOTE/$APP && $REMOTE/$APP"
+# 网络配置和启动命令
+adb shell "ifconfig usb0 192.168.137.2 up && \
+           (route add default gw 192.168.137.1 dev usb0 || true) && \
+           cd /root/echo_mate/bin && \
+           ./echo_mate_app"
