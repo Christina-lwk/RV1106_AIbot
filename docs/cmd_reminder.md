@@ -42,3 +42,11 @@ AI 语音处理的大脑。
 | 命令 | 作用 |
 | :--- | :--- |
 | `./scripts/auto_fix_net.sh` | **网络守护神**：自动修复 USB 掉线导致的 IP 丢失问题 |
+
+建议你把下面的流程背下来（或者写成一个脚本）：
+
+1. **Stop (停)**：`adb shell killall -9 echo_mate_app`
+2. **Clean (清)**：`rm -rf product/build` (仅在代码改了没生效时做)
+3. **Build (编)**：`./scripts/build.sh`
+4. **Push (传)**：`./scripts/push.sh` (确保脚本里有 `rm` 旧文件的命令)
+5. **Run (跑)**：`em_run`
