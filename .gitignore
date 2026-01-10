@@ -1,23 +1,26 @@
-# 忽略编译生成目录
+# --- 忽略 Python 虚拟环境 (最重要) ---
+venv/
+.venv/
+env/
+
+# --- 忽略编译产物 ---
 product/build/
 product/bin/
-
-# 忽略临时文件
 *.o
 *.d
+
+# --- 忽略运行时数据 ---
+uploads/
+responses/
+logs/
+*.wav
+*.mp3
+
+# --- 忽略 IDE 配置 ---
+.vscode/
+.idea/
 .DS_Store
 
-# 忽略用户录制的临时音频
-uploads/*.wav
-server/uploads/*.wav
-server/responses/*.wav
-
-# 忽略 Python 缓存
+# --- 忽略 Python 缓存 ---
 __pycache__/
 *.pyc
-
-# 忽略 VSCode 配置 (可选)
-.vscode/
-
-# 忽略主要的可执行文件 (因为每次都会重新编译)
-echo_mate_app

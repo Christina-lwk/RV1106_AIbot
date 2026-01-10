@@ -34,6 +34,7 @@ AI 语音处理的大脑。
 
 | 命令 | 作用 |
 | :--- | :--- |
+| `source venv/bin/activate` | 激活环境(在项目根目录下执行) |
 | `python3 server/server.py` | 启动 AI 服务端 (监听 5000 端口) |
 | `sudo ufw disable` | 如果连不上，尝试关闭防火墙 |
 
