@@ -13,8 +13,8 @@ class ChatApp;
 
 struct ChatContext {
     // 硬件服务的指针 (使用智能指针管理生命周期)
-    std::shared_ptr<AudioProcess> audio;
-    std::shared_ptr<NetworkClient> network;
+    AudioProcess* audio;
+    NetworkClient* network;
     
     // 全局标志位
     bool should_exit = false;     // 是否退出聊天App返回主页
@@ -23,8 +23,8 @@ struct ChatContext {
 
     // 构造函数初始化
     ChatContext() {
-        audio = std::make_shared<AudioProcess>();
-        network = std::make_shared<NetworkClient>();
+        audio = &AudioProcess::GetInstance();
+        network = &NetworkClient::GetInstance();
     }
 };
 

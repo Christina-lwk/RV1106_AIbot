@@ -20,9 +20,15 @@ void ChatApp::Init() {
     // if (ctx_.ui) ctx_.ui->Init();
 
     // 2. 播放开机声音
-    // [修改点] 使用 aplay，这是板子自带的播放命令
-    std::cout << ">>> [Init] Playing greeting sound..." << std::endl;
-    system("aplay ../assets/greeting.wav");
+    // 使用 aplay，这是板子自带的播放命令
+    system("aplay assets/greeting.wav");
+
+    // 3. 启动音频服务后台线程:启动 RecordLoop 和 PlayLoop
+    if (AudioProcess::GetInstance().Start()) {
+        std::cout << "[ChatApp] Audio Service Started Successfully." << std::endl;
+    } else {
+        std::cerr << "[ChatApp] ERROR: Failed to start Audio Service!" << std::endl;
+    }
 
     // 3. 进入待机状态
     ChangeState(new IdleState());
@@ -30,6 +36,13 @@ void ChatApp::Init() {
 
 void ChatApp::RunOnce() {
     if (ctx_.should_exit) return;
+
+    if (!current_state_) {
+        // 如果这里打印了，说明状态机丢了！可能是 Init 里没 SetState 成功
+        printf("[Error] ChatApp::RunOnce: current_state_ is NULL!\n");
+        return;
+    }
+
     if (current_state_) {
         StateBase* next_state = current_state_->Update(&ctx_);
         if (next_state != nullptr) {

@@ -1,32 +1,25 @@
-#include "speaking_state.h"
-#include "idle_state.h"
+#include "states/speaking_state.h"
+#include "states/idle_state.h"
+#include "services/audio/AudioProcess.h" // 必须引入
 #include <iostream>
-#include <stdlib.h> // for system()
-#include <unistd.h> // for sleep()
+#include <unistd.h> // for sleep
 
 void SpeakingState::Enter(ChatContext* ctx) {
     std::cout << ">>> [State]SPEAKING" << std::endl;
-    // 如果你有UI，这里可以 ctx->ui->ShowSpeaking();
+    
+    // [核心修复] 不要用 system("aplay ...")，因为设备被占用了
+    // 使用 AudioProcess 内部接口播放
+    AudioProcess::GetInstance().PlayWavFile("reply.wav");
 }
 
 StateBase* SpeakingState::Update(ChatContext* ctx) {
-    if (has_audio_) {
-        std::cout << "   (Playing reply.wav)" << std::endl;
-        
-        // [关键] 调用板子自带的播放器播放下载好的音频
-        // system() 是阻塞的，意味着播放完才会往下走，非常适合这里
-        int ret = system("aplay reply.wav");
-        
-        if (ret != 0) {
-             std::cout << "   (Error: Playback failed)" << std::endl;
-        }
-    } else {
-        std::cout << "   (Error: No audio to play)" << std::endl;
-        // 如果没音频，稍微停顿一下让人看清错误
-        sleep(1);
-    }
-
-    // 播放完毕，回到 Idle，等待下一次唤醒
+    // [重要] 我们需要给一点时间让它把话说完
+    // 简单做法：这里先死等 5-6 秒 (假设回复不会太长)
+    // 进阶做法：可以去读取 wav 文件头计算时长，但现在先由你预估
+    
+    sleep(6); // 假设回复不超过 6 秒
+    
+    // 播放结束，回到空闲状态，准备下一次唤醒
     return new IdleState();
 }
 

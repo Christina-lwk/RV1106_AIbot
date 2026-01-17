@@ -1,198 +1,127 @@
-Collecting workspace information# Echo-Mate 项目技术白皮书
+# Echo‑Mate 技术白皮书（2026.1.17）
 
-## 1. 项目简介 (Project Overview)
+## 概要
+Echo‑Mate 是运行在 Rockchip RV1106 开发板上的嵌入式 AI 语音助手。客户端为 C++（状态机 + 单例服务），服务端为 Python (Flask)（Whisper + Edge‑TTS）。文档重点说明音频子系统、网络协议兼容性与端侧/服端协同优化。
 
-### 项目概述
-Echo-Mate 是一个基于嵌入式设备的AI语音聊天机器人项目，旨在通过语音交互实现智能对话。核心解决的问题是：在资源受限的嵌入式硬件（如RV1106开发板）上，实现低延迟的语音识别（ASR）、AI推理和语音合成（TTS），提供类似智能音箱的交互体验。项目强调模块化设计，支持状态机驱动的对话流程，并集成网络通信以连接云端AI服务。
+---
 
-### 主要功能模块
-- **语音处理 (Audio Processing)**: 录音、播放、音频格式转换，使用TinyALSA库管理硬件。
-- **网络通信 (Network Communication)**: 通过CURL上传音频、下载回复，实现与Python服务器的HTTP交互。
-- **UI界面 (User Interface)**: 基于LVGL的图形界面，支持触摸输入和显示状态。
-- **状态机管理 (State Machine)**: 聊天流程的状态流转（如Idle、Listening、Thinking、Speaking），确保对话逻辑清晰。
-- **服务器端 (Server Backend)**: Python Flask服务器，集成Whisper ASR和Edge-TTS，实现云端语音处理。
-- **应用管理 (App Management)**: 多App切换机制，支持主页和聊天App的生命周期管理。
+## 1. 系统架构（System Architecture）
+- 架构风格：状态机（State Machine）驱动的业务流 + 单例服务（Singleton Services）。
+  - 状态机基类与实现：`StateBase`, 状态实现示例：`IdleState` / `ListeningState` / `ThinkingState` / `SpeakingState`。
+  - 状态机入口与驱动：`ChatApp` / chat_app.cc。
+  - 上下文共享：`ChatContext`。
 
-项目当前版本为v0.1，主要实现基础聊天流程，未来可扩展更多功能如多语言支持或本地AI推理。
+- 核心单例服务：
+  - 音频：`AudioProcess` / AudioProcess.cc（录音/播放线程、队列、WAV 管理）。
+  - 网络：`NetworkClient` / NetworkClient.cc（libcurl 封装：上传/下载/超时/头部定制）。
+  - 唤醒：基于 Snowboy 的检测在 `IdleState` 中使用（引用 `snowboy-detect`）。
 
-## 2. 技术栈与环境 (Tech Stack)
+---
 
-### 核心编程语言与框架
-- **编程语言**: C/C++ (主逻辑，C++11标准)、Python (服务器端)。
-- **嵌入式框架**: LVGL (v8.x，轻量级GUI库，用于UI渲染)。
-- **音频库**: TinyALSA (Android开源音频库，用于PCM音频操作)。
-- **网络库**: libcurl (v8.x，用于HTTP请求和文件传输)。
-- **JSON处理**: cJSON (轻量级JSON解析库)。
-- **服务器框架**: Flask (Python Web框架，用于REST API)。
+## 2. 音频子系统（Audio Subsystem）— 重点更新
+1. 采集策略
+   - 硬件层使用 TinyALSA 以双声道采集（Stereo, 16 kHz），参考 TinyALSA 接口：[`pcm_read` / `pcm_readi`](include/tinyalsa/pcm.h) 与示例工具 tinycap.c。
+   - 软件层在单例服务中做通道分离：`AudioProcess::RecordLoop` 从双声道数据中提取左声道为单声道用于唤醒/录音（Stereo -> Mono），并将单声道数据推入录音队列（供 Snowboy 使用）。
 
-### 关键第三方库及其版本
-- **LVGL**: v8.x (UI渲染和事件处理)。
-- **TinyALSA**: v1.1.1 (音频硬件抽象)。
-- **libcurl**: v8.x (网络通信，支持HTTPS)。
-- **Whisper**: base模型 (OpenAI开源ASR模型，用于语音识别)。
-- **Edge-TTS**: 最新版 (Microsoft Edge TTS，用于语音合成)。
-- **FFmpeg**: 系统级工具 (音频格式转换)。
+2. WAV 封装（零依赖实现）
+   - 废弃板端 FFmpeg 依赖：采用原生 C/C++ 文件操作（`fseek` + `fwrite`）在端侧写入/回填 WAV 头，参考实现：`AudioProcess::SaveStart` 与 `AudioProcess::SaveStop`。
+   - 优点：减小运行时依赖与闪存占用，避免跨进程调用带来的资源竞争。
 
-### 开发环境要求
-- **硬件依赖**: RV1106开发板 (ARM架构，Linux系统)，支持音频输入/输出和触摸屏。USB连接用于ADB调试。
-- **操作系统**: Ubuntu 主机 (开发环境)，板子运行Buildroot Linux。
-- **编译工具链**: arm-rockchip830-linux-uclibcgnueabihf-gcc/g++ (交叉编译)，Make构建系统。
-- **Python环境**: Python 3.x，虚拟环境 (venv)，依赖whisper、edge-tts、flask。
-- **其他工具**: ADB (Android Debug Bridge，用于设备通信)，FFmpeg (音频处理)。
-- **网络要求**: 服务器运行在主机5000端口，板子通过USB网络连接 (192.168.137.x)。
+3. 音频设备冲突管理（Device/resource busy）
+   - 彻底废弃使用 `system("arecord")` / `system("aplay")` 的做法（相关旧处：chat_app.cc 中开机播放、历史实现），改为由 `AudioProcess` 独占管理所有音频流。
+   - Speaking 状态播放改为调用：`AudioProcess::PlayWavFile`（见 speaking_state.cc 的改动），避免 "Device or resource busy" 错误。
 
-## 3. 项目架构 (Architecture & Structure)
+4. XRUN / Buffer Overrun 恢复
+   - 在采集循环中对错误进行详细日志并实现恢复逻辑：当检测到 XRUN/缓冲溢出，优先尝试 `pcm_prepare` 进行恢复；若设备不可用则尝试重开（见 `AudioProcess::RecordLoop` 的错误处理与重开逻辑）。
+   - 该策略降低了在资源受限环境下的录音崩溃概率并提升稳定性。
 
-### 目录树结构图
-以下是项目的核心目录树结构（基于提供的workspace），每个文件夹/文件标注职责。结构遵循模块化原则，将源代码、库、配置分离。
+5. 播放管线与单声道-双声道兼容
+   - 播放线程将单声道 PCM 数据复制成双声道（Mono -> Stereo）以适配板端双声道硬件：`AudioProcess::PlayLoop`。
 
-```
-.
-├── .gitignore                    # Git忽略文件 (版本控制配置)
-├── Makefile                      # 构建脚本 (定义编译规则、依赖扫描)
-├── toolchain.mk                  # 工具链配置 (交叉编译路径)
-├── .vscode/                      # VS Code配置 (C/C++属性、设置)
-│   ├── c_cpp_properties.json     # C/C++扩展配置
-│   └── settings.json             # 编辑器设置
-├── assets/                       # 静态资源 (UI和音频素材)
-│   ├── fonts/                    # 字体文件 (LVGL使用)
-│   ├── images/                   # 图片资源 (UI图标)
-│   └── sounds/                   # 音频文件 (开机音效等)
-├── docs/                         # 文档 (README、命令清单)
-│   ├── cmd_reminder.md           # 开发命令速查
-│   └── README.md                 # 项目说明
-├── include/                      # 头文件 (公共声明和配置)
-│   ├── tinyalsa/                 # TinyALSA库头文件 (音频API)
-│   ├── curl/                     # libcurl头文件 (网络API)
-│   ├── cjson/                    # cJSON头文件 (JSON解析)
-│   ├── lv_conf.h                 # LVGL配置 (UI参数)
-│   ├── evdev.h                   # 输入设备头 (触摸支持)
-│   └── common/                   # 公共工具头 (日志、App定义)
-├── product/                      # 构建产物 (编译输出)
-│   ├── bin/                      # 可执行文件 (echo_mate_app)
-│   └── build/                    # 中间对象文件 (.o)
-├── responses/                    # 服务器响应缓存 (TTS音频)
-├── scripts/                      # 自动化脚本 (构建、部署、调试)
-│   ├── auto_fix_net.sh           # 网络修复脚本
-│   ├── build.sh                  # 构建脚本
-│   ├── push.sh                   # 上传脚本
-│   └── run.sh                    # 运行脚本
-├── server/                       # Python服务器 (云端AI处理)
-│   ├── server.py                 # Flask应用 (ASR/TTS API)
-│   └── responses/                # 服务器本地响应文件夹
-├── src/                          # 源代码 (核心逻辑)
-│   ├── main.cc                   # 程序入口 (系统初始化)
-│   ├── app/                      # 应用层 (App管理)
-│   │   ├── app_manager.c         # App调度器 (切换逻辑)
-│   │   ├── home_app.c            # 主页App (UI显示)
-│   │   └── AI_chat/              # AI聊天App (状态机核心)
-│   │       ├── chat_app.cc       # 聊天App入口
-│   │       ├── chat_context.h    # 上下文定义 (服务指针)
-│   │       └── states/           # 状态机实现
-│   │           ├── state_base.h  # 状态基类
-│   │           ├── idle_state.cc # 待机状态
-│   │           ├── listening_state.cc # 录音状态
-│   │           ├── thinking_state.cc # 处理状态
-│   │           └── speaking_state.cc # 播放状态
-│   ├── services/                 # 服务层 (硬件抽象)
-│   │   ├── audio/                # 音频服务
-│   │   │   ├── AudioProcess.cc   # 录音/播放逻辑
-│   │   │   └── AudioProcess.h    # 音频接口
-│   │   └── network/              # 网络服务
-│   │       ├── NetworkClient.cc  # HTTP客户端
-│   │       └── NetworkClient.h   # 网络接口
-│   ├── ui/                       # UI层 (LVGL集成)
-│   │   ├── lvgl_port.c           # LVGL移植 (帧缓冲、输入)
-│   │   └── lvgl_port.h           # UI接口
-│   └── utils/                    # 工具层 (音频工具)
-│       ├── tinycap.c             # 录音工具
-│       ├── tinymix.c             # 混音工具
-│       └── tinyplay.c            # 播放工具
-├── third_party/                  # 第三方库源码
-│   ├── lvgl/                     # LVGL源码
-│   ├── tinyalsa/                 # TinyALSA源码
-│   ├── Demo4Echo/                # 示例代码
-│   └── lv_drivers/               # LVGL驱动
-└── uploads/                      # 上传缓存 (ASR音频)
-```
+---
 
-### 层级关系解释
-项目采用类似MVC (Model-View-Controller) 的分层架构，但针对嵌入式优化：
-- **UI层 (View)**: ui 和 lvgl，负责显示和输入。LVGL处理渲染，lvgl_port.c 桥接硬件帧缓冲和触摸事件。不直接操作逻辑。
-- **逻辑层 (Controller)**: app 和 services，控制业务流程。app_manager.c 管理App切换，`AI_chat/` 实现状态机。服务层 (`services/`) 抽象硬件，如音频和网络。
-- **数据/硬件层 (Model)**: third_party 和 include，提供底层API。TinyALSA管理音频硬件，CURL处理网络数据。
-- **交互方式**: UI层通过回调触发App逻辑，App调用服务层接口。状态机在 chat_app.cc 中驱动，避免阻塞主循环。服务器 (server) 作为外部Model，提供AI推理。
+## 3. 网络通信协议（Network Protocol）— 重点更新
+- 客户端使用 libcurl（已内置头文件：`include/curl/curl.h` / 库头在 curl）做 HTTP 通信，核心实现：`NetworkClient::SendAudio`、`NetworkClient::DownloadFile`、`NetworkClient::SendRequest`。
 
-这种设计确保模块解耦，便于测试和扩展。
+- 关键兼容性配置
+  - 明确禁用 `Expect: 100-continue` 与 `Transfer-Encoding: chunked`，确保 Flask 开发服务器能立即处理表单上传并兼容 Content-Length 传输（实现见：`NetworkClient::SendAudio`，通过 `curl_slist_append(headerlist, "Expect:")` 与 `curl_slist_append(headerlist, "Transfer-Encoding:")`）。
+  - 加入请求超时（`CURLOPT_TIMEOUT`）以避免长时间阻塞（见 `NetworkClient::SendAudio` / `NetworkClient::DownloadFile`）。
+  - 上传使用 MIME multipart（`curl_mime`），下载使用写文件回调：`WriteFileCallback`。
 
-## 4. 核心逻辑与调用关系 (Key Logic & Data Flow)
+- 设计目的：在开发阶段与 Flask 简单 HTTP 服务器配合时，减少分块传输导致的兼容性问题与阻塞行为，提升端侧在不稳定网络下的可恢复性。
 
-### 核心业务流程1: 系统初始化流程
-- **入口**: `src/main.cc:main()`。
-- **调用链**:
-  1. `lvgl_port_init()` → 初始化LVGL (UI层)，调用 `fbdev_init()` 设置帧缓冲。
-  2. `app_manager_init()` → 注册App。
-  3. `app_manager_start(&home_app)` → 启动主页App，调用 `home_app.init()` 和 `home_app.enter()` 创建UI。
-  4. `ChatApp::Init()` → 初始化聊天App，播放开机音效 (`system("aplay")`)，进入Idle状态。
-  5. 主循环: `lv_timer_handler()` (UI刷新) + `app_manager_loop()` (App逻辑) + `robot.RunOnce()` (状态机更新)。
-- **目的**: 确保硬件就绪，UI显示，聊天服务启动。
+---
 
-### 核心业务流程2: AI聊天流程 (状态机驱动)
-- **入口**: `ChatApp::RunOnce()`，每帧调用。
-- **状态流转逻辑**:
-  - **Idle**: 等待触发 (计数器模拟)，切换到Listening。
-  - **Listening**: 调用 `system("arecord")` 录音5秒，保存 `user_input.wav`，切换到Thinking。
-  - **Thinking**: `NetworkClient::SendAudio()` 上传音频到服务器，解析JSON回复，下载 `reply.wav`，切换到Speaking。
-  - **Speaking**: `system("aplay reply.wav")` 播放回复，切换回Idle。
-- **调用链** (Thinking状态为例):
-  1. `ThinkingState::Update()` → `ctx->network->SendAudio(filepath)` (CURL上传)。
-  2. 服务器处理: `server.py:chat()` → Whisper ASR → Edge-TTS → 返回JSON。
-  3. `NetworkClient::DownloadFile()` (CURL下载)。
-- **数据流**: 音频从麦克风 → WAV文件 → 服务器 → 回复音频 → 播放。
+## 4. 服务端逻辑（Server‑Side Logic）
+- 服务端主文件：server.py
+  - ASR：使用 Whisper base model（加载见 server.py），用于将上传的清洗后音频转文本。
+  - TTS：使用 Edge‑TTS（`edge_tts`）生成 MP3，再通过 FFmpeg 转码为 16kHz / 16bit / Mono WAV（`generate_tts_wav` 异步实现见 server.py）。
+  - 音频处理流程（简要）：
+    - 接收端上传音频 -> 保存为 raw_input.wav -> 使用 ffmpeg 转成 16k 单声道 -> Whisper 转录 -> LLM/回复生成 -> Edge‑TTS 生成 MP3 -> FFmpeg 转换为 16k WAV -> 返回并通过 `/get_audio/<filename>` 提供下载。
 
-### 核心业务流程3: 音频处理流程
-- **录音**: `AudioProcess::recordLoop()` → `pcm_open()` + `pcm_readi()` 循环读取PCM数据。
-- **播放**: `AudioProcess::playLoop()` → 从队列取数据，`pcm_writei()` 输出。
-- **调用关系**: `ListeningState` 调用 `system("arecord")` (阻塞)，未来可替换为 `AudioProcess` 非阻塞接口。
+---
 
-状态机使用多态基类 `StateBase`，确保扩展性。数据通过 `ChatContext` 共享，避免全局变量。
+## 5. 交互流程（Interaction Loop）
+流程与关键代码位置：
+1. 唤醒检测（Snowboy） — 由 `IdleState::Update` 从 `AudioProcess` 读取帧并调用 Snowboy（模型由 `IdleState` 构造时加载）。
+2. 播放提示音（Cue） — `ListeningState::Enter` 调用：`AudioProcess::PlayWavFile` 播放唤醒提示。
+3. 录音（5s） — `ListeningState::Enter` / `Update` / `Exit` 调用：`AudioProcess::SaveStart` / `AudioProcess::SaveStop`（端侧零依赖 WAV 写入）。
+4. 上传（POST /chat） — `ThinkingState::Update` 使用：`NetworkClient::SendAudio` 上传 `user_input.wav`。
+5. Server (ASR/TTS) 处理 — 见 server.py。
+6. 下载回复音频 — `NetworkClient::DownloadFile` 下载 `reply.wav`。
+7. 播放回复 — `SpeakingState::Enter` 调用：`AudioProcess::PlayWavFile`；播放结束后由 `SpeakingState::Update` 切回 `IdleState`。
 
-## 5. 代码规范与约定 (Conventions)
+---
 
-### 命名规范
-- **文件/文件夹**: 小写+下划线 (e.g., chat_app.cc, `audio_process.h`)，头文件与源文件同名。
-- **函数/变量**: 驼峰命名 (e.g., `SendAudio()`, `isRunning`)，类名首字母大写 (e.g., `ChatApp`)。
-- **宏/常量**: 全大写+下划线 (e.g., `PCM_FORMAT_S16_LE`)。
+## 6. 模块功能速览（便于定位）
+- [`AudioProcess`]AudioProcess.h / src/services/audio/AudioProcess.cc)  
+  管理录音/播放线程、PCM 转换、WAV 写入/回填、队列、XRUN 恢复。
+  - 关键方法：`AudioProcess::RecordLoop`, `AudioProcess::PlayLoop`, `AudioProcess::SaveStart`, `AudioProcess::SaveStop`, `AudioProcess::PlayWavFile`, `AudioProcess::ClearBuff`。
 
-### 注释风格
-- 使用 `//` 单行注释，中文描述关键逻辑 (e.g., `// [核心实现] 上传音频`)。
-- 函数前有简短说明，复杂逻辑有步骤注释。
-- 遵循Doxygen风格 (e.g., `/** @file */`)。
+- [`NetworkClient`]NetworkClient.h / src/services/network/NetworkClient.cc)  
+  libcurl 封装：上传（multipart）、下载（写文件回调）、请求超时、头部定制以兼容 Flask。
+  - 关键方法：`NetworkClient::SendAudio`, `NetworkClient::DownloadFile`, `NetworkClient::SendRequest`。
 
-### 设计模式与约定
-- **状态机模式**: 用于聊天流程，基类 `StateBase` 定义接口，子类实现具体状态。
-- **单例模式**: `NetworkClient` 使用静态 `GetInstance()`。
-- **智能指针**: C++代码使用 `std::shared_ptr` 管理服务生命周期。
-- **模块化**: 每个文件夹职责单一，include 集中头文件，避免循环依赖。
-- **错误处理**: 使用 `fprintf(stderr)` 输出错误，函数返回码表示状态 (e.g., -1失败)。
+- 状态机与流程（AI Chat）
+  - 基类：`StateBase`  
+  - 状态实现：`IdleState`, `ListeningState`, `ThinkingState`, `SpeakingState`  
+  - 管理器：[`ChatApp`]chat_app.cc / src/app/AI_chat/chat_app.h) 与 `ChatContext`。
 
-## 6. 待办与已知问题 (Roadmap & Context)
+- Server：server.py（Whisper + Edge‑TTS + ffmpeg 转码）。
 
-### 开发进度
-- **已完成**: 基础聊天流程 (录音→上传→下载→播放)，LVGL UI初始化，网络通信，音频硬件集成。服务器ASR/TTS跑通。
-- **进行中**: 状态机优化 (e.g., 非阻塞录音)，UI交互 (触摸事件处理)。
-- **待办** (基于代码TODO和注释):
-  - `ChatApp::Init()` 中UI初始化被注释 (`// ctx_.ui->Init()`)，需恢复并实现UI状态显示。
-  - `IdleState` 使用计数器模拟唤醒，需替换为真实语音唤醒 (e.g., 集成关键词检测)。
-  - `AudioProcess` 的 `playWavFile()` 和录音接口未在状态机中完全使用，仍依赖 `system()` 调用。
-  - 多App切换: `home_app` 简单显示标签，需添加按钮切换到聊天App。
-  - 网络稳定性: auto_fix_net.sh 脚本处理USB掉线，但需自动化集成。
+---
 
-### 已知问题与未跑通部分
-- **UI层**: LVGL初始化正常，但触摸输入 (`evdev`) 未完全测试，`fbdev_flush()` 可能在某些分辨率下有显示问题。
-- **音频同步**: `system("aplay")` 阻塞主循环，影响UI响应；`AudioProcess` 非阻塞版本需调试PCM参数。
-- **服务器依赖**: Whisper模型加载慢，TTS生成需网络；本地无GPU时ASR准确率低。
-- **构建问题**: 交叉编译依赖SDK路径 (`/home/ubuntu/project/Echo-Mate/SDK/...`)，若路径变更需更新 toolchain.mk。
-- **测试覆盖**: 无单元测试，端到端测试依赖硬件，网络断开时无重试机制。
+## 7. 针对嵌入式限制与兼容性的关键优化（要点）
+- 零依赖端侧 WAV 写入，移除对 FFmpeg 的运行时依赖（降低镜像与运行期资源占用）：[`AudioProcess::SaveStart` / `SaveStop`](src/services/audio/AudioProcess.cc)。
+- 单一音频管理进程（`AudioProcess`）独占设备，替换 `system("arecord"/"aplay")` 调用，避免设备竞用导致的阻塞/错误：speaking_state.cc 与 chat_app.cc 的相关改动。
+- 网络兼容性：禁用分块/Expect 头，使用 Content-Length/MIME 上传以确保对 Flask 简单服务器的兼容：`NetworkClient::SendAudio`。
+- 稳定性：录音链路的 XRUN 检测+pcm_prepare 恢复、播放端的单声道->双声道适配，提升在低资源/高负载条件下的鲁棒性：`AudioProcess::RecordLoop` / `AudioProcess::PlayLoop`。
 
-这份白皮书基于当前代码库撰写，旨在帮助新开发者快速上手。如有更新，请同步修改。
+---
+
+## 参考源码（快速打开）
+- 状态机与上下文
+  - chat_app.h / chat_app.cc
+  - chat_context.h
+  - state_base.h
+  - idle_state.h / idle_state.cc
+  - listening_state.h / listening_state.cc
+  - thinking_state.cc
+  - speaking_state.cc
+
+- 音频子系统
+  - AudioProcess.h
+  - AudioProcess.cc
+  - TinyALSA 接口：include/tinyalsa/pcm.h
+  - 实验/工具参考：tinycap.c, tinyplay.c
+
+- 网络子系统
+  - NetworkClient.h
+  - NetworkClient.cc
+
+- 服务端
+  - server.py
+
+---
+
+如需我把上述文档导出为 PDF 或补充架构图（PlantUML / mermaid），或生成 CI 检查清单与回归测试用例，请告知所需格式及优先项。

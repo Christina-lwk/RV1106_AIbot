@@ -44,6 +44,9 @@ std::string NetworkClient::SendAudio(const std::string& filepath) {
     CURL* curl = curl_easy_init();
     std::string response;
     
+    // 定义 header 链表指针
+    struct curl_slist *headerlist = NULL;
+
     if (curl) {
         // 拼接 URL: http://IP:5000/chat
         std::string url = "http://" + server_ip_ + ":" + std::to_string(port_) + "/chat";
@@ -57,18 +60,32 @@ std::string NetworkClient::SendAudio(const std::string& filepath) {
         curl_mime_filedata(part, filepath.c_str());
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        
+        // [核心修改]
+        // 1. 添加 "Expect:" 头部（值为空）,禁用复杂传输方式
+        headerlist = curl_slist_append(headerlist, "Expect:");
+        headerlist = curl_slist_append(headerlist, "Transfer-Encoding:");
+        // 2. 将 header 应用到 curl
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerlist);
+
         curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteStringCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
         
-        // ✅ [Fix] 增加超时时间到 30秒，给服务器 CPU 留出足够时间运行 Whisper
+        // 超时时间
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L); 
 
         CURLcode res = curl_easy_perform(curl);
         if(res != CURLE_OK) {
             std::cerr << "❌ [Network] Upload Error: " << curl_easy_strerror(res) << std::endl;
+        } else {
+            // 打印一下服务器的原始回复，方便调试
+            // std::cout << "✅ [Network] Server Response: " << response << std::endl;
         }
 
+        // --- [清理] 别忘了释放 headerlist ---
+        curl_slist_free_all(headerlist);
+        
         curl_mime_free(mime);
         curl_easy_cleanup(curl);
     }

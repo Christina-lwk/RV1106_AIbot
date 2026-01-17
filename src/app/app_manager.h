@@ -1,5 +1,5 @@
 #pragma once
-#include "app.h"
+#include "include/common/app.h"
 
 void app_manager_init(void);
 void app_manager_start(app_t *app);
