@@ -165,7 +165,6 @@ void AudioProcess::PlayWavFile(const std::string& filename) {
         std::cerr << "[Audio] Error: File not found " << filename << std::endl;
         return;
     }
-
     std::cout << "[Audio] Playing: " << filename << std::endl;
     
     // 跳过 WAV 头
@@ -219,7 +218,6 @@ void AudioProcess::SaveStart(const std::string& filename) {
     // [关键优化] 先写入 44 字节的空数据占位
     // 这样我们就可以直接往后追加音频，最后再回来填坑
     WavHeader dummy_header;
-    memset(&dummy_header, 0, sizeof(dummy_header));
     fwrite(&dummy_header, sizeof(WavHeader), 1, record_fp_);
 
     printf("[Audio] Start saving to: %s\n", filename.c_str());
@@ -333,13 +331,30 @@ void AudioProcess::RecordLoop() {
     }
 }
 
+// ... (前面的构造、析构、Init、Start、Stop 保持不变) ...
+
+// [新增] 计算 RMS 能量
+double AudioProcess::CalculateRMS(const std::vector<int16_t>& data) {
+    if (data.empty()) return 0.0;
+    double sum = 0.0;
+    for (int16_t sample : data) {
+        sum += sample * sample; // 平方
+    }
+    // 均方根
+    return std::sqrt(sum / data.size());
+}
+
+// 判断是否正在播放：只要队列里还有数据，就认为还没播完
+bool AudioProcess::IsPlaying() {
+    std::lock_guard<std::mutex> lock(playback_mutex_);
+    return !playback_queue_.empty();
+}
+
+// [修改] PlayLoop 逻辑微调
 void AudioProcess::PlayLoop() {
     printf("[Audio] Playback Thread Started (Software: 1ch -> Hardware: 2ch).\n");
 
-    // [适配 RV1106] 硬件必须开启双声道
-    config_.channels = 2;
-
-    // 打开播放设备 (card 0, device 0)
+    config_.channels = 2; // 硬件双声道
     pcm_out_ = pcm_open(0, 0, PCM_OUT, &config_);
 
     if (!pcm_out_ || !pcm_is_ready(pcm_out_)) {
@@ -351,10 +366,8 @@ void AudioProcess::PlayLoop() {
     while (is_running_.load()) {
         std::vector<int16_t> mono_frame;
         
-        // 1. 从队列取出【单声道】数据
         {
             std::unique_lock<std::mutex> lock(playback_mutex_);
-            // 等待数据或者停止信号
             playback_cv_.wait(lock, [this] {
                 return !playback_queue_.empty() || !is_running_.load();
             });
@@ -365,18 +378,14 @@ void AudioProcess::PlayLoop() {
             playback_queue_.pop();
         }
 
-        // --- [软件转换：单声道 -> 双声道] ---
-        // 为了让双声道硬件正常播放单声道音频，我们需要把数据复制一份
-        // Mono: [A, B, C] -> Stereo: [A, A, B, B, C, C]
+        // 双声道转换
         std::vector<int16_t> stereo_frame(mono_frame.size() * 2);
-        
         for (size_t i = 0; i < mono_frame.size(); ++i) {
-            stereo_frame[2 * i]     = mono_frame[i]; // Left
-            stereo_frame[2 * i + 1] = mono_frame[i]; // Right
+            stereo_frame[2 * i]     = mono_frame[i]; 
+            stereo_frame[2 * i + 1] = mono_frame[i]; 
         }
 
-        // 2. 写入硬件播放【双声道数据】
-        // 注意：pcm_write 需要的是字节数，这里用 vector 的 size * sizeof(int16_t) 最稳妥
+        // 写入硬件 (这一步是耗时的，约 64ms)
         int ret = pcm_write(pcm_out_, stereo_frame.data(), stereo_frame.size() * sizeof(int16_t));
         
         if (ret < 0) {

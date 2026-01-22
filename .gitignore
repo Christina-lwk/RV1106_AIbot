@@ -2,6 +2,7 @@
 venv/
 .venv/
 env/
+server/.env
 
 # --- 忽略编译产物 ---
 product/build/

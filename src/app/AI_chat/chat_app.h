@@ -8,21 +8,32 @@ class ChatApp {
 public:
     ChatApp();
     ~ChatApp();
-
-    // 初始化硬件和服务
+    
+    // 初始化硬件和服务 (AudioProcess 等)，但不启动业务逻辑
     void Init();
 
-    // 核心心跳函数：被 main 主循环调用，每次执行一步逻辑即返回
+    // [新增] 启动 App (当 main 检测到唤醒词时调用)
+    void Start();
+
+    // [新增] 停止 App (内部调用，或者强制退出时调用)
+    void Stop();
+
+    // 状态查询
+    bool IsRunning() const { return is_running_; }
+
+    // 核心心跳函数
     void RunOnce();
 
 private:
+    bool is_running_ = false; // 标志位
+
     // 内部切换状态的辅助函数
     void ChangeState(StateBase* new_state);
 
-    // 机器人“大脑”的所有记忆和感知 (Audio, Network, Flags)
+    // 上下文
     ChatContext ctx_;
 
-    // 当前所处的状态 (Idle, Listening, Speaking...)
+    // 当前状态
     StateBase* current_state_;
 };
 

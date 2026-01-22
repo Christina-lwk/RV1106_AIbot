@@ -15,6 +15,19 @@ static size_t WriteFileCallback(void *ptr, size_t size, size_t nmemb, void *stre
     return fwrite(ptr, size, nmemb, (FILE *)stream);
 }
 
+// [新增] 简单的 JSON 布尔值解析辅助函数
+// 查找 "key": true 或 "key":true
+static bool ParseBoolFromJson(const std::string& json, const std::string& key) {
+    std::string pattern1 = "\"" + key + "\": true";
+    std::string pattern2 = "\"" + key + "\":true";
+    
+    if (json.find(pattern1) != std::string::npos || 
+        json.find(pattern2) != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
 void NetworkClient::init() {
     curl_global_init(CURL_GLOBAL_ALL);
 }
@@ -40,10 +53,12 @@ std::string NetworkClient::SendRequest(const std::string& endpoint) {
 }
 
 // [核心实现] 上传音频
-std::string NetworkClient::SendAudio(const std::string& filepath) {
+std::string NetworkClient::SendAudio(const std::string& filepath, bool& out_should_exit) {
     CURL* curl = curl_easy_init();
     std::string response;
     
+    out_should_exit = false;
+
     // 定义 header 链表指针
     struct curl_slist *headerlist = NULL;
 
@@ -79,8 +94,10 @@ std::string NetworkClient::SendAudio(const std::string& filepath) {
         if(res != CURLE_OK) {
             std::cerr << "❌ [Network] Upload Error: " << curl_easy_strerror(res) << std::endl;
         } else {
-            // 打印一下服务器的原始回复，方便调试
-            // std::cout << "✅ [Network] Server Response: " << response << std::endl;
+            if (ParseBoolFromJson(response, "should_end_session")) {
+                out_should_exit = true;
+                std::cout << "✅ [Network] Exit signal received from Server." << std::endl;
+            }
         }
 
         // --- [清理] 别忘了释放 headerlist ---

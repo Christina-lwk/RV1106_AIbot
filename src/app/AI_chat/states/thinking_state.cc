@@ -15,8 +15,11 @@ StateBase* ThinkingState::Update(ChatContext* ctx) {
     // 2. 发送刚才录制的真实音频
     // 这个文件是刚才 ListeningState 用 arecord 生成的
     std::cout << "   (Uploading user_input.wav)..." << std::endl;
-    std::string json = ctx->network->SendAudio("user_input.wav");
     
+    bool server_wants_exit = false;
+    std::string json = ctx->network->SendAudio("user_input.wav", server_wants_exit);
+    ctx->should_exit = server_wants_exit;
+
     // 3. 检查有没有收到回复
     if (json.empty()) {
         std::cerr << "   (Error: Server No Response)" << std::endl;

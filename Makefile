@@ -39,7 +39,6 @@ CFLAGS  := $(COMMON_FLAGS) \
 
 CXXFLAGS := $(COMMON_FLAGS) -std=c++11 -D_GLIBCXX_USE_CXX11_ABI=0# 链接参数
 
-# 修改后的 LDFLAGS 应该长这样：
 LDFLAGS  := -L$(SYSROOT_LIB_DIR) \
             -L$(LIB_DIR)/snowboy/lib \
             -lm -lpthread -lcurl -lcjson -lssl -lcrypto -lz \

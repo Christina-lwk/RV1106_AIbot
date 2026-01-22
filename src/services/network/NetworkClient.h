@@ -28,8 +28,7 @@ public:
     std::string SendRequest(const std::string& endpoint);
 
     // 上传音频
-    std::string SendAudio(const std::string& filepath);
-
+    std::string SendAudio(const std::string& filepath, bool& out_should_exit);
     // 下载文件
     bool DownloadFile(const std::string& url_path, const std::string& save_path);
 
